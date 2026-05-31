@@ -50,48 +50,6 @@
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
-const PASS = "456789";
-
-function LoginScreen({ onLogin }) {
-  const [pw, setPw] = useState("");
-  const [err, setErr] = useState(false);
-  const [show, setShow] = useState(false);
-
-  const handleLogin = () => {
-    if(pw === PASS) { localStorage.setItem("kk_auth","1"); onLogin(); }
-    else { setErr(true); setTimeout(()=>setErr(false),1500); }
-  };
-
-  return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0f1923 0%,#162535 60%,#0d1e2d 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:"#1a2d3d",border:"1.5px solid #2a3f52",borderRadius:20,padding:32,width:"100%",maxWidth:360,boxShadow:"0 8px 40px #00000060"}}>
-        <div style={{textAlign:"center",marginBottom:28}}>
-          <div style={{fontSize:52,marginBottom:12}}>📦</div>
-          <div style={{fontWeight:800,fontSize:22,letterSpacing:1}}>KIỂM KHO</div>
-          <div style={{fontSize:13,color:"#7fa8be",marginTop:6}}>Nhập mật khẩu để tiếp tục</div>
-        </div>
-        <div style={{position:"relative",marginBottom:16}}>
-          <input
-            type={show?"text":"password"}
-            value={pw}
-            onChange={e=>setPw(e.target.value)}
-            onKeyDown={e=>e.key==="Enter"&&handleLogin()}
-            placeholder="Mật khẩu..."
-            style={{width:"100%",boxSizing:"border-box",padding:"13px 48px 13px 16px",background:"#0d1f2d",border:`1.5px solid ${err?"#ef4444":"#00b4d830"}`,borderRadius:10,color:"#e8f4f8",fontSize:16,outline:"none",transition:"border .2s"}}
-          />
-          <button onClick={()=>setShow(v=>!v)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#7fa8be",cursor:"pointer",fontSize:18}}>
-            {show?"🙈":"👁️"}
-          </button>
-        </div>
-        {err && <div style={{color:"#ef4444",fontSize:13,textAlign:"center",marginBottom:12}}>❌ Sai mật khẩu, thử lại!</div>}
-        <button onClick={handleLogin} style={{width:"100%",padding:"14px",borderRadius:10,border:"none",background:"linear-gradient(90deg,#00b4d8,#0077b6)",color:"#fff",fontWeight:800,cursor:"pointer",fontSize:16,boxShadow:"0 4px 16px #00b4d840"}}>
-          🔓 Đăng nhập
-        </button>
-      </div>
-    </div>
-  );
-}
-
 const UNITS = ["thùng","lon","chai","kg","lạng","g","gói","hộp","bao","cái","con","bó","lít"];
 const SUPPLIER_ICONS = ["🥬","🥩","🍺","🐟","🦐","🥚","🍜","🛒","🌶️","🧅","🧄","🫙","🍗","🥦","🍋","🍤","🧆","🫘","🌽","🥕"];
 const COLORS = ["#f59e0b","#22c55e","#ef4444","#00b4d8","#a855f7","#f97316","#ec4899","#14b8a6","#6366f1","#84cc16"];
@@ -145,8 +103,6 @@ function ZaloModal({text,onChange,copied,onCopy,onClose}) {
 }
 
 function App() {
-  const [authed, setAuthed] = useState(localStorage.getItem("kk_auth")==="1");
-  if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
 
   const [ready, setReady] = useState(!!window.__firebaseReady);
   const [syncStatus, setSyncStatus] = useState("syncing"); // online | offline | syncing
