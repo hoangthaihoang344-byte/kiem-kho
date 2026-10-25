@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>📦 Kiểm Kho</title>
+<meta name="theme-color" content="#0e8074"/>
+<meta name="description" content="Tool kiểm kho Quán Hồ Ngọc - đồng bộ realtime giữa các máy"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>"/>
+<title>📦 Kiểm Kho • Quán Hồ Ngọc</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -34,25 +37,29 @@
 </script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#0f1923; font-family:'Segoe UI',Tahoma,sans-serif; color:#e8f4f8; }
+  body { background:#e9f4f1; font-family:'Segoe UI',Tahoma,sans-serif; color:#14332c; }
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; }
-  input[type=number] { -moz-appearance:textfield; }
-  .sync-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:4px; }
+  input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+  input[type=date] { font-family:inherit; }
+  .sync-dot { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:4px; }
   .sync-dot.online { background:#22c55e; box-shadow:0 0 6px #22c55e; }
   .sync-dot.offline { background:#ef4444; }
   .sync-dot.syncing { background:#f59e0b; animation: pulse 1s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  @keyframes toastIn { from{transform:translateY(16px);opacity:0} to{transform:translateY(0);opacity:1} }
+  button:active { transform:scale(.98); }
 </style>
 </head>
 <body>
-<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#7fa8be"><div style="font-size:32px">📦</div><div>Đang kết nối...</div></div></div>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#3d7a6e"><div style="font-size:40px">📦</div><div>Đang kết nối dữ liệu...</div></div></div>
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
 const UNITS = ["thùng","lon","chai","kg","lạng","g","gói","hộp","bao","cái","con","bó","lít"];
 const SUPPLIER_ICONS = ["🥬","🥩","🍺","🐟","🦐","🥚","🍜","🛒","🌶️","🧅","🧄","🫙","🍗","🥦","🍋","🍤","🧆","🫘","🌽","🥕"];
-const COLORS = ["#f59e0b","#22c55e","#ef4444","#00b4d8","#a855f7","#f97316","#ec4899","#14b8a6","#6366f1","#84cc16"];
+const COLORS = ["#f59e0b","#22c55e","#ef4444","#0e8074","#a855f7","#f97316","#ec4899","#14b8a6","#6366f1","#84cc16"];
+const STEPS = {"kg":0.5,"lít":0.5,"lạng":0.5};
 
 const INITIAL_SUPPLIERS = [
   { id:1, name:"Bạn hàng Bia", icon:"🍺", color:"#f59e0b",
@@ -63,37 +70,86 @@ const INITIAL_SUPPLIERS = [
     products:[{id:301,name:"Thịt ba chỉ",unit:"kg"},{id:302,name:"Thịt nạc xay",unit:"kg"},{id:303,name:"Xương heo",unit:"kg"}]},
 ];
 
-function getToday() {
-  return new Date().toLocaleDateString("vi-VN",{weekday:"long",year:"numeric",month:"2-digit",day:"2-digit"});
+// ---- Helpers ----
+function localKey(d) {
+  d = d || new Date();
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), dd=String(d.getDate()).padStart(2,"0");
+  return y+"-"+m+"-"+dd;
 }
-function getTodayKey() { return new Date().toISOString().split("T")[0]; }
+function fmtDate(key) {
+  const p=key.split("-").map(Number);
+  const dt=new Date(p[0],p[1]-1,p[2]);
+  return dt.toLocaleDateString("vi-VN",{weekday:"long",day:"2-digit",month:"2-digit",year:"numeric"});
+}
+function shiftKey(key,delta) {
+  const p=key.split("-").map(Number);
+  const dt=new Date(p[0],p[1]-1,p[2]);
+  dt.setDate(dt.getDate()+delta);
+  return localKey(dt);
+}
 function uid() { return Date.now()+Math.random().toString(36).slice(2); }
+function toArr(x) {
+  if(!x) return [];
+  if(Array.isArray(x)) return x.filter(v=>v!==null&&v!==undefined);
+  return Object.values(x).filter(v=>v!==null&&v!==undefined);
+}
+function normSuppliers(x) {
+  return toArr(x).map(s=>({ ...s, products: toArr(s && s.products) }));
+}
+function fmtQty(v) {
+  if(v===undefined||v===null||v==="") return "";
+  const n=Number(v);
+  if(isNaN(n)) return String(v);
+  return String(Math.round(n*100)/100);
+}
+function stepFor(unit) { return STEPS[unit] || 1; }
+function downloadFile(name, content, type) {
+  const blob=new Blob([content],{type:type||"text/plain;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },400);
+}
+function copyText(text, done) {
+  if(navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  } else fallbackCopy(text,done);
+}
+function fallbackCopy(text, done) {
+  const ta=document.createElement("textarea");
+  ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } catch(e) {}
+  ta.remove(); done && done();
+}
 
 const S = {
-  page:{ minHeight:"100vh", background:"linear-gradient(160deg,#0f1923 0%,#162535 60%,#0d1e2d 100%)", paddingBottom:60 },
-  header:{ background:"linear-gradient(90deg,#00b4d8,#0077b6)", padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 4px 24px #00b4d840", position:"sticky", top:0, zIndex:50 },
-  backBtn:{ background:"#ffffff22", border:"none", color:"#fff", borderRadius:10, padding:"8px 14px", cursor:"pointer", fontWeight:700, fontSize:14 },
-  card:{ background:"#1a2d3d", border:"1.5px solid #2a3f52", borderRadius:14, padding:"14px 16px", marginBottom:10 },
-  input:{ width:"100%", padding:"10px 12px", background:"#0d1f2d", border:"1.5px solid #00b4d830", borderRadius:8, color:"#e8f4f8", fontSize:14, outline:"none" },
-  select:{ width:"100%", padding:"10px 12px", background:"#0d1f2d", border:"1.5px solid #00b4d830", borderRadius:8, color:"#e8f4f8", fontSize:14, outline:"none" },
-  btnPrimary:{ padding:"12px 18px", borderRadius:10, border:"none", background:"linear-gradient(90deg,#00b4d8,#0077b6)", color:"#fff", fontWeight:800, cursor:"pointer", fontSize:14 },
-  btnGhost:{ padding:"8px 12px", background:"#0d2337", border:"1.5px solid #00b4d830", borderRadius:8, color:"#00b4d8", cursor:"pointer", fontSize:14 },
-  btnDanger:{ padding:"8px 12px", background:"#ff44440f", border:"1.5px solid #ff444430", borderRadius:8, color:"#ff7070", cursor:"pointer", fontSize:14 },
-  label:{ fontSize:12, color:"#7fa8be", display:"block", marginBottom:4, marginTop:8 },
+  page:{ minHeight:"100vh", background:"linear-gradient(170deg,#e9f4f1 0%,#f4faf8 55%,#e6f2ee 100%)", paddingBottom:60 },
+  header:{ background:"linear-gradient(90deg,#0b6e5f,#12a594)", padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 4px 20px #0e80743d", position:"sticky", top:0, zIndex:50, color:"#fff" },
+  backBtn:{ background:"#ffffff2e", border:"none", color:"#fff", borderRadius:10, padding:"9px 14px", cursor:"pointer", fontWeight:700, fontSize:14, minHeight:40 },
+  card:{ background:"#ffffff", border:"1.5px solid #d3e6df", borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px #0e807414" },
+  input:{ width:"100%", padding:"11px 12px", background:"#ffffff", border:"1.5px solid #bcdcd2", borderRadius:8, color:"#14332c", fontSize:14, outline:"none" },
+  select:{ width:"100%", padding:"11px 12px", background:"#ffffff", border:"1.5px solid #bcdcd2", borderRadius:8, color:"#14332c", fontSize:14, outline:"none" },
+  btnPrimary:{ padding:"12px 18px", borderRadius:10, border:"none", background:"linear-gradient(90deg,#0e8074,#12a594)", color:"#fff", fontWeight:800, cursor:"pointer", fontSize:14, minHeight:44 },
+  btnGhost:{ padding:"9px 12px", background:"#ffffff", border:"1.5px solid #bcdcd2", borderRadius:8, color:"#0b6e5f", cursor:"pointer", fontSize:14, minHeight:40 },
+  btnDanger:{ padding:"9px 12px", background:"#fff5f5", border:"1.5px solid #f3c2c2", borderRadius:8, color:"#d64545", cursor:"pointer", fontSize:14, minHeight:40 },
+  label:{ fontSize:12, color:"#55877b", display:"block", marginBottom:4, marginTop:8, fontWeight:600 },
+  chip:{ padding:"8px 14px", borderRadius:20, border:"1.5px solid #bcdcd2", background:"#fff", color:"#0b6e5f", cursor:"pointer", fontSize:13, fontWeight:700, minHeight:38 },
 };
 
 function ZaloModal({text,onChange,copied,onCopy,onClose}) {
   return (
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"#000000bb",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,padding:16}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:"#1a2d3d",border:"2px solid #00b4d840",borderRadius:20,padding:20,width:"100%",maxWidth:560,boxShadow:"0 -8px 40px #00b4d830"}}>
-        <div style={{fontWeight:800,fontSize:16,marginBottom:12}}>💬 Tin nhắn Zalo</div>
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"#06231bcc",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#ffffff",borderRadius:20,padding:20,width:"100%",maxWidth:560,boxShadow:"0 -8px 40px #00000030"}}>
+        <div style={{fontWeight:800,fontSize:16,marginBottom:12,color:"#0b6e5f"}}>💬 Tin nhắn Zalo</div>
         <textarea value={text} onChange={e=>onChange(e.target.value)} rows={10}
-          style={{width:"100%",background:"#0d1f2d",border:"1.5px solid #00b4d830",borderRadius:10,color:"#e8f4f8",fontSize:14,padding:14,outline:"none",resize:"vertical",lineHeight:1.8,fontFamily:"inherit"}}/>
+          style={{width:"100%",background:"#f4faf8",border:"1.5px solid #bcdcd2",borderRadius:10,color:"#14332c",fontSize:14,padding:14,outline:"none",resize:"vertical",lineHeight:1.8,fontFamily:"inherit"}}/>
         <div style={{display:"flex",gap:10,marginTop:12}}>
-          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:10,border:"1.5px solid #2a3f52",background:"transparent",color:"#7fa8be",fontWeight:600,cursor:"pointer"}}>Đóng</button>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:10,border:"1.5px solid #d3e6df",background:"transparent",color:"#55877b",fontWeight:600,cursor:"pointer"}}>Đóng</button>
           <button onClick={onCopy} style={{flex:2,padding:"12px",borderRadius:10,border:"none",
-            background:copied?"linear-gradient(90deg,#00c853,#009624)":"linear-gradient(90deg,#00b4d8,#0077b6)",
-            color:"#fff",fontWeight:800,cursor:"pointer",fontSize:15,transition:"background .3s"}}>
+            background:copied?"linear-gradient(90deg,#22c55e,#16a34a)":"linear-gradient(90deg,#0e8074,#12a594)",
+            color:"#fff",fontWeight:800,cursor:"pointer",fontSize:15}}>
             {copied?"✅ Đã sao chép!":"📋 Sao chép"}
           </button>
         </div>
@@ -105,11 +161,13 @@ function ZaloModal({text,onChange,copied,onCopy,onClose}) {
 function App() {
 
   const [ready, setReady] = useState(!!window.__firebaseReady);
-  const [syncStatus, setSyncStatus] = useState("syncing"); // online | offline | syncing
+  const [loadError, setLoadError] = useState(false);
+  const [syncStatus, setSyncStatus] = useState("syncing");
   const [suppliers, setSuppliers] = useState(INITIAL_SUPPLIERS);
   const [inventory, setInventory] = useState({});
   const [screen, setScreen] = useState("home");
   const [activeSupId, setActiveSupId] = useState(null);
+  const [selDate, setSelDate] = useState(localKey());
   const [showZalo, setShowZalo] = useState(false);
   const [zaloText, setZaloText] = useState("");
   const [copied, setCopied] = useState(false);
@@ -117,14 +175,30 @@ function App() {
   const [editProdId, setEditProdId] = useState(null);
   const [editProdVal, setEditProdVal] = useState({});
   const [showAddProd, setShowAddProd] = useState(false);
-  const [supForm, setSupForm] = useState({name:"",icon:"🛒",color:"#00b4d8"});
+  const [supForm, setSupForm] = useState({name:"",icon:"🛒",color:"#0e8074"});
   const [showSupForm, setShowSupForm] = useState(false);
   const [editSupId, setEditSupId] = useState(null);
-  const todayKey = getTodayKey();
+  const [search, setSearch] = useState("");
+  const [onlyUnchecked, setOnlyUnchecked] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef(null);
+  const importRef = useRef(null);
+  const todayKey = localKey();
+  const isToday = selDate===todayKey;
+
+  const showToast = (msg) => {
+    setToast(msg);
+    if(toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current=setTimeout(()=>setToast(""),2600);
+  };
 
   useEffect(() => {
     if(window.__firebaseReady) { setReady(true); return; }
-    window.addEventListener("firebase-ready", () => setReady(true));
+    const onReady=()=>setReady(true);
+    window.addEventListener("firebase-ready", onReady);
+    const t=setTimeout(()=>setLoadError(true),12000);
+    return ()=>{ window.removeEventListener("firebase-ready", onReady); clearTimeout(t); };
   }, []);
 
   // Subscribe Firebase
@@ -134,111 +208,235 @@ function App() {
     const dbRef = window.__dbRef;
     const onValue = window.__dbOnValue;
 
-    // Suppliers
+    const connRef = dbRef(db, ".info/connected");
+    const unsubConn = onValue(connRef, snap => {
+      setSyncStatus(snap.val()===true ? "online" : "offline");
+    });
+
     const supRef = dbRef(db, "suppliers");
     const unsubSup = onValue(supRef, snap => {
       const val = snap.val();
-      if(val) setSuppliers(val);
-      else {
-        // First time: write initial data
-        window.__dbSet(dbRef(db,"suppliers"), INITIAL_SUPPLIERS);
-      }
-      setSyncStatus("online");
+      if(val) setSuppliers(normSuppliers(val));
+      else window.__dbSet(dbRef(db,"suppliers"), INITIAL_SUPPLIERS);
     }, () => setSyncStatus("offline"));
 
-    // Inventory today
-    const invRef = dbRef(db, `inventory/${todayKey}`);
+    const invRef = dbRef(db, "inventory/"+selDate);
     const unsubInv = onValue(invRef, snap => {
       setInventory(snap.val() || {});
-    });
+    }, () => setSyncStatus("offline"));
 
-    return () => { unsubSup(); unsubInv(); };
-  }, [ready]);
+    return () => { unsubConn(); unsubSup(); unsubInv(); };
+  }, [ready, selDate]);
 
   const saveSuppliers = (newSups) => {
-    setSuppliers(newSups);
+    const clean = normSuppliers(newSups);
+    setSuppliers(clean);
     setSyncStatus("syncing");
     const db = window.__db;
-    window.__dbSet(window.__dbRef(db,"suppliers"), newSups)
+    window.__dbSet(window.__dbRef(db,"suppliers"), clean)
       .then(()=>setSyncStatus("online"))
-      .catch(()=>setSyncStatus("offline"));
+      .catch(()=>{ setSyncStatus("offline"); showToast("⚠️ Chưa lưu được, kiểm tra mạng!"); });
   };
 
-  const saveInventory = (newInv) => {
-    setInventory(newInv);
+  // Ghi TỪNG mặt hàng (không ghi đè cả ngày) để 2 máy nhập cùng lúc không đè mất số của nhau
+  const saveQty = (pid, raw) => {
     const db = window.__db;
-    window.__dbSet(window.__dbRef(db,`inventory/${todayKey}`), newInv)
-      .catch(()=>setSyncStatus("offline"));
+    const path = "inventory/"+selDate+"/"+pid;
+    if(raw==="" || raw===null || raw===undefined) {
+      const newInv={...inventory}; delete newInv[pid]; setInventory(newInv);
+      window.__dbRemove(window.__dbRef(db,path)).catch(()=>setSyncStatus("offline"));
+    } else {
+      const num=Number(raw);
+      if(isNaN(num) || num<0) return;
+      setInventory({...inventory, [pid]: num});
+      window.__dbSet(window.__dbRef(db,path), num).catch(()=>setSyncStatus("offline"));
+    }
   };
+  const updateQty = (pid,val) => saveQty(pid,val);
 
-  const activeSup = suppliers.find ? suppliers.find(s=>s.id===activeSupId) : null;
-  const updateQty = (pid,val) => {
-    const newInv = {...inventory, [pid]: val===""?"":Number(val)};
-    saveInventory(newInv);
-  };
-  const supChecked = s => s.products ? s.products.filter(p=>inventory[p.id]!==undefined&&inventory[p.id]!=="").length : 0;
-  const totalChecked = Array.isArray(suppliers) ? suppliers.reduce((a,s)=>a+supChecked(s),0) : 0;
-  const totalProducts = Array.isArray(suppliers) ? suppliers.reduce((a,s)=>a+(s.products?s.products.length:0),0) : 0;
+  const suppliersArr = Array.isArray(suppliers) ? suppliers : normSuppliers(suppliers);
+  const activeSup = suppliersArr.find(s=>String(s.id)===String(activeSupId)) || null;
+  const supChecked = s => (s.products||[]).filter(p=>inventory[p.id]!==undefined&&inventory[p.id]!=="").length;
+  const totalChecked = suppliersArr.reduce((a,s)=>a+supChecked(s),0);
+  const totalProducts = suppliersArr.reduce((a,s)=>a+(s.products?s.products.length:0),0);
+  const pctAll = totalProducts?Math.round(totalChecked/totalProducts*100):0;
 
-  const openZalo = (text) => { setZaloText(text); setShowZalo(true); };
+  const openZalo = (text) => { setZaloText(text); setCopied(false); setShowZalo(true); };
+  const itemsOf = (sup) => (sup.products||[]).filter(p=>inventory[p.id]!==undefined&&inventory[p.id]!==""&&Number(inventory[p.id])>0);
   const genZaloSup = (sup) => {
-    const items = sup.products.filter(p=>inventory[p.id]!==undefined&&inventory[p.id]!==""&&Number(inventory[p.id])>0);
-    if(!items.length){alert("Chưa có món nào số lượng > 0!");return;}
-    openZalo([`📅 ${getToday()}`,"",...items.map(p=>`• ${p.name}: ${inventory[p.id]} ${p.unit}`)].join("\n"));
+    const items = itemsOf(sup);
+    if(!items.length){ showToast("Chưa có món nào số lượng > 0!"); return; }
+    openZalo(["📦 KIỂM KHO - QUÁN HỒ NGỌC","📅 "+fmtDate(selDate),"",sup.icon+" "+sup.name.toUpperCase(),...items.map(p=>"• "+p.name+": "+fmtQty(inventory[p.id])+" "+p.unit)].join("\n"));
   };
   const genZaloAll = () => {
-    const sups = Array.isArray(suppliers) ? suppliers : [];
-    const sections = sups.map(sup=>{
-      const items = sup.products ? sup.products.filter(p=>inventory[p.id]!==undefined&&inventory[p.id]!==""&&Number(inventory[p.id])>0) : [];
+    const sections = suppliersArr.map(sup=>{
+      const items = itemsOf(sup);
       if(!items.length) return null;
-      return [`${sup.icon} ${sup.name.toUpperCase()}`,...items.map(p=>`  • ${p.name}: ${inventory[p.id]} ${p.unit}`)].join("\n");
+      return [sup.icon+" "+sup.name.toUpperCase(),...items.map(p=>"  • "+p.name+": "+fmtQty(inventory[p.id])+" "+p.unit)].join("\n");
     }).filter(Boolean);
-    if(!sections.length){alert("Chưa có món nào số lượng > 0!");return;}
-    openZalo([`📅 ${getToday()}`,"",...sections.join("\n\n").split("\n")].join("\n"));
+    if(!sections.length){ showToast("Chưa có món nào số lượng > 0!"); return; }
+    openZalo(["📦 KIỂM KHO - QUÁN HỒ NGỌC","📅 "+fmtDate(selDate),"",sections.join("\n\n")].join("\n"));
   };
-  const handleCopy = () => {
-    navigator.clipboard.writeText(zaloText).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
+  const handleCopy = () => { copyText(zaloText, ()=>{ setCopied(true); setTimeout(()=>setCopied(false),2000); }); };
+
+  // ---- Xuất Excel (CSV) / In phiếu / Sao lưu ----
+  const buildRows = () => {
+    const rows=[];
+    suppliersArr.forEach(sup=>{
+      (sup.products||[]).forEach(p=>{
+        const has=inventory[p.id]!==undefined&&inventory[p.id]!=="";
+        rows.push({sup:sup.name, name:p.name, qty:has?fmtQty(inventory[p.id]):"", unit:p.unit, checked:has});
+      });
+    });
+    return rows;
+  };
+  const exportCSV = () => {
+    const rows=buildRows();
+    if(!rows.length){ showToast("Chưa có mặt hàng nào để xuất!"); return; }
+    const esc=v=>'"'+String(v).split('"').join('""')+'"';
+    const lines=[["Ngày","Bạn hàng","Mặt hàng","Số lượng","Đơn vị","Tình trạng"].map(esc).join(";")];
+    rows.forEach(r=>lines.push([fmtDate(selDate),r.sup,r.name,r.qty,r.unit,r.checked?"Đã kiểm":"Chưa kiểm"].map(esc).join(";")));
+    downloadFile("kiem-kho-"+selDate+".csv","\uFEFF"+lines.join("\r\n"),"text/csv;charset=utf-8");
+    showToast("📊 Đã xuất file Excel (CSV)");
+  };
+  const printReport = () => {
+    const rows=buildRows();
+    if(!rows.length){ showToast("Chưa có mặt hàng nào để in!"); return; }
+    let body="", lastSup="";
+    rows.forEach(r=>{
+      if(r.sup!==lastSup){ lastSup=r.sup; body+='<tr><td colspan="5" style="background:#e6f4f0;font-weight:700;padding:7px 9px">'+lastSup+"</td></tr>"; }
+      body+="<tr><td>"+r.name+"</td><td style='text-align:center'>"+(r.qty===""?"—":r.qty)+"</td><td style='text-align:center'>"+r.unit+"</td><td style='text-align:center'>"+(r.checked?"✓":"")+"</td><td></td></tr>";
+    });
+    const html="<html><head><meta charset='utf-8'><title>Phiếu kiểm kho "+selDate+"</title><style>body{font-family:Arial,sans-serif;color:#14332c;padding:24px}h1{font-size:20px;margin:0}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #9fc6ba;padding:6px 9px;font-size:13px}th{background:#0e8074;color:#fff}</style></head><body>"
+      +"<h1>📦 PHIẾU KIỂM KHO - QUÁN HỒ NGỌC</h1>"
+      +"<div>330 Phan Văn Trị, P. Bình Lợi Trung, TP.HCM - 0916 302 894</div>"
+      +"<div>Ngày: <b>"+fmtDate(selDate)+"</b> &nbsp;•&nbsp; Đã kiểm: <b>"+totalChecked+"/"+totalProducts+"</b> mặt hàng</div>"
+      +"<table><tr><th style='text-align:left'>Mặt hàng</th><th>Số lượng</th><th>Đơn vị</th><th>Đã kiểm</th><th>Ghi chú</th></tr>"+body+"</table>"
+      +"<div style='margin-top:16px;font-size:12px;color:#666'>In từ tool Kiểm Kho Quán Hồ Ngọc - "+new Date().toLocaleString("vi-VN")+"</div>"
+      +"</body></html>";
+    const w=window.open("","_blank");
+    if(!w){ showToast("Trình duyệt chặn cửa sổ in, bạn cho phép popup nhé!"); return; }
+    w.document.write(html); w.document.close(); w.focus();
+    setTimeout(()=>{ w.print(); },400);
+  };
+  const exportBackup = () => {
+    const data={ app:"kiem-kho-ho-ngoc", version:2, exportedAt:new Date().toISOString(), date:selDate, suppliers:suppliersArr, inventory:inventory };
+    downloadFile("sao-luu-kiem-kho-"+selDate+".json", JSON.stringify(data,null,2), "application/json");
+    showToast("💾 Đã tải file sao lưu");
+  };
+  const importBackup = (e) => {
+    const f=e.target.files && e.target.files[0];
+    e.target.value="";
+    if(!f) return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+      try {
+        const data=JSON.parse(reader.result);
+        if(!data || !data.suppliers) throw new Error("bad");
+        if(!confirm("Khôi phục sao lưu này? Danh sách bạn hàng hiện tại sẽ bị thay bằng dữ liệu trong file.")) return;
+        saveSuppliers(normSuppliers(data.suppliers));
+        if(data.inventory && data.date) {
+          const db=window.__db;
+          window.__dbSet(window.__dbRef(db,"inventory/"+data.date), data.inventory).catch(()=>{});
+          setSelDate(data.date);
+          if(data.date===selDate) setInventory(data.inventory);
+        }
+        showToast("♻️ Đã khôi phục sao lưu");
+      } catch(err) { showToast("⚠️ File sao lưu không hợp lệ!"); }
+    };
+    reader.readAsText(f);
   };
 
   const addProduct = () => {
     if(!newProd.name.trim()) return;
-    const newSups = suppliers.map(s=>s.id===activeSupId?{...s,products:[...(s.products||[]),{id:uid(),name:newProd.name.trim(),unit:newProd.unit}]}:s);
+    const newSups = suppliersArr.map(s=>String(s.id)===String(activeSupId)?{...s,products:[...(s.products||[]),{id:uid(),name:newProd.name.trim(),unit:newProd.unit}]}:s);
     saveSuppliers(newSups);
     setNewProd({name:"",unit:"kg"}); setShowAddProd(false);
+    showToast("✅ Đã thêm mặt hàng");
   };
-  const delProduct = (pid) => {
-    const newSups = suppliers.map(s=>s.id===activeSupId?{...s,products:s.products.filter(p2=>p2.id!==pid)}:s);
+  const delProduct = (p) => {
+    if(!confirm('Xóa mặt hàng "'+p.name+'"?')) return;
+    const newSups = suppliersArr.map(s=>String(s.id)===String(activeSupId)?{...s,products:(s.products||[]).filter(p2=>String(p2.id)!==String(p.id))}:s);
     saveSuppliers(newSups);
-    const newInv = {...inventory}; delete newInv[pid]; saveInventory(newInv);
+    saveQty(p.id,"");
+    showToast("🗑️ Đã xóa "+p.name);
   };
   const saveEditProd = () => {
-    const newSups = suppliers.map(s=>s.id===activeSupId?{...s,products:s.products.map(p2=>p2.id===editProdId?{...p2,...editProdVal}:p2)}:s);
+    if(!editProdVal.name || !editProdVal.name.trim()) { showToast("Tên mặt hàng không được trống!"); return; }
+    const newSups = suppliersArr.map(s=>String(s.id)===String(activeSupId)?{...s,products:(s.products||[]).map(p2=>String(p2.id)===String(editProdId)?{...p2,name:editProdVal.name.trim(),unit:editProdVal.unit}:p2)}:s);
     saveSuppliers(newSups); setEditProdId(null);
   };
   const saveSup = () => {
     if(!supForm.name.trim()) return;
     let newSups;
-    if(editSupId) newSups = suppliers.map(s=>s.id===editSupId?{...s,...supForm}:s);
-    else newSups = [...suppliers,{id:uid(),...supForm,products:[]}];
+    if(editSupId) newSups = suppliersArr.map(s=>String(s.id)===String(editSupId)?{...s,...supForm}:s);
+    else newSups = [...suppliersArr,{id:uid(),...supForm,products:[]}];
     saveSuppliers(newSups);
-    setEditSupId(null); setSupForm({name:"",icon:"🛒",color:"#00b4d8"}); setShowSupForm(false);
+    setEditSupId(null); setSupForm({name:"",icon:"🛒",color:"#0e8074"}); setShowSupForm(false);
+    showToast("✅ Đã lưu bạn hàng");
   };
   const delSup = (id) => {
-    if(!confirm("Xóa bạn hàng này?")) return;
-    const sup = suppliers.find(s=>s.id===id);
-    if(sup&&sup.products) { const newInv={...inventory}; sup.products.forEach(pr=>delete newInv[pr.id]); saveInventory(newInv); }
-    saveSuppliers(suppliers.filter(s=>s.id!==id));
-    if(activeSupId===id){setActiveSupId(null);setScreen("home");}
+    if(!confirm("Xóa bạn hàng này và toàn bộ mặt hàng của họ?")) return;
+    const sup = suppliersArr.find(s=>String(s.id)===String(id));
+    if(sup) (sup.products||[]).forEach(pr=>saveQty(pr.id,""));
+    saveSuppliers(suppliersArr.filter(s=>String(s.id)!==String(id)));
+    if(String(activeSupId)===String(id)){ setActiveSupId(null); setScreen("home"); }
+    showToast("🗑️ Đã xóa bạn hàng");
   };
-  const resetToday = () => {
-    if(confirm("Xóa toàn bộ số lượng hôm nay?")) saveInventory({});
+  const resetDay = () => {
+    if(!confirm("Xóa toàn bộ số lượng của ngày "+fmtDate(selDate)+"?")) return;
+    const db = window.__db;
+    window.__dbRemove(window.__dbRef(db,"inventory/"+selDate)).catch(()=>{});
+    setInventory({});
+    showToast("🗑️ Đã xóa số lượng ngày này");
   };
 
   const syncLabel = syncStatus==="online"?"Đồng bộ":syncStatus==="syncing"?"Đang lưu...":"Mất kết nối";
+  const toastEl = toast ? (
+    <div style={{position:"fixed",left:"50%",transform:"translateX(-50%)",bottom:22,zIndex:300,background:"#0b3d33",color:"#fff",padding:"12px 18px",borderRadius:12,fontSize:14,fontWeight:600,boxShadow:"0 8px 28px #00000040",animation:"toastIn .25s ease",maxWidth:"92vw",textAlign:"center"}}>{toast}</div>
+  ) : null;
+  const reportModal = showReport ? (
+    <div onClick={()=>setShowReport(false)} style={{position:"fixed",inset:0,background:"#06231bcc",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:20,padding:20,width:"100%",maxWidth:560,maxHeight:"84vh",overflowY:"auto",boxShadow:"0 -8px 40px #00000030"}}>
+        <div style={{fontWeight:800,fontSize:16,color:"#0b6e5f"}}>📋 Phiếu kiểm kho</div>
+        <div style={{fontSize:13,color:"#55877b",margin:"4px 0 12px"}}>{fmtDate(selDate)} • Đã kiểm {totalChecked}/{totalProducts}</div>
+        {suppliersArr.map(sup=>(
+          <div key={sup.id} style={{marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>{sup.icon} {sup.name}</div>
+            {(sup.products||[]).map(p=>{
+              const has=inventory[p.id]!==undefined&&inventory[p.id]!=="";
+              return (
+                <div key={p.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 2px",borderBottom:"1px dashed #d3e6df",fontSize:14}}>
+                  <span>{has?"✅":"⬜"} {p.name}</span>
+                  <span style={{fontWeight:has?700:400,color:has?"#0b6e5f":"#9db8b0"}}>{has?fmtQty(inventory[p.id])+" "+p.unit:"chưa kiểm"}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
+          <button onClick={printReport} style={{flex:1,...S.btnPrimary}}>🖨️ In phiếu</button>
+          <button onClick={exportCSV} style={{flex:1,...S.btnGhost}}>📊 Xuất Excel</button>
+          <button onClick={()=>setShowReport(false)} style={{flex:1,padding:"12px",borderRadius:10,border:"1.5px solid #d3e6df",background:"transparent",color:"#55877b",fontWeight:600,cursor:"pointer"}}>Đóng</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
-  if(!ready) return null;
-
-  const suppliersArr = Array.isArray(suppliers) ? suppliers : [];
+  if(!ready) return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:14,padding:24,textAlign:"center"}}>
+      <div style={{fontSize:44}}>📦</div>
+      {loadError ? (
+        <React.Fragment>
+          <div style={{fontWeight:700,fontSize:16,color:"#d64545"}}>Chưa kết nối được dữ liệu</div>
+          <div style={{fontSize:14,color:"#55877b",maxWidth:420}}>Có thể do mạng yếu hoặc Firebase đang chậm. Bạn kiểm tra internet rồi thử lại nhé.</div>
+          <button onClick={()=>window.location.reload()} style={S.btnPrimary}>🔄 Thử lại</button>
+        </React.Fragment>
+      ) : (
+        <div style={{color:"#55877b"}}>Đang kết nối dữ liệu...</div>
+      )}
+    </div>
+  );
 
   // HOME
   if(screen==="home") return (
@@ -247,43 +445,69 @@ function App() {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:26}}>📦</span>
           <div>
-            <div style={{fontWeight:800,fontSize:18,letterSpacing:1}}>KIỂM KHO</div>
-            <div style={{fontSize:11,opacity:.85}}>{getToday()}</div>
+            <div style={{fontWeight:800,fontSize:18,letterSpacing:.5}}>KIỂM KHO</div>
+            <div style={{fontSize:11,opacity:.9}}>Quán Hồ Ngọc • {fmtDate(selDate)}</div>
           </div>
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span className={`sync-dot ${syncStatus}`}></span>
-            <span style={{fontSize:11,opacity:.85}}>{syncLabel}</span>
+            <span className={"sync-dot "+syncStatus}></span>
+            <span style={{fontSize:11,opacity:.9}}>{syncLabel}</span>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <div style={{background:"#ffffff22",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>✅ {totalChecked}/{totalProducts}</div>
-            <button onClick={genZaloAll} style={{...S.btnPrimary,padding:"6px 10px",fontSize:12}}>📤 Zalo</button>
+            <div style={{background:"#ffffff2e",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>✅ {totalChecked}/{totalProducts}</div>
+            <button onClick={genZaloAll} style={{...S.btnPrimary,padding:"7px 12px",fontSize:12,minHeight:34,background:"#ffffff",color:"#0b6e5f"}}>📤 Zalo</button>
           </div>
         </div>
       </div>
 
       <div style={{padding:16,maxWidth:640,margin:"0 auto"}}>
+        <div style={{...S.card,padding:"12px 14px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>setSelDate(shiftKey(selDate,-1))} style={{...S.chip,flex:"0 0 auto"}}>← Hôm qua</button>
+            <input type="date" value={selDate} max={todayKey} onChange={e=>{ if(e.target.value) setSelDate(e.target.value); }}
+              style={{flex:1,minWidth:140,padding:"9px 10px",border:"1.5px solid #bcdcd2",borderRadius:10,fontSize:14,color:"#14332c",background:"#f4faf8",minHeight:38}}/>
+            <button onClick={()=>setSelDate(shiftKey(selDate,1))} disabled={isToday} style={{...S.chip,flex:"0 0 auto",opacity:isToday?.45:1}}>Mai →</button>
+            {!isToday && <button onClick={()=>setSelDate(todayKey)} style={{...S.chip,background:"#0e8074",color:"#fff",borderColor:"#0e8074"}}>Về hôm nay</button>}
+          </div>
+          <div style={{marginTop:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:6}}>
+              <span style={{color:"#55877b",fontWeight:600}}>Tiến độ kiểm ngày này</span>
+              <span style={{fontWeight:800,color:"#0b6e5f"}}>{pctAll}%</span>
+            </div>
+            <div style={{height:8,background:"#e2efea",borderRadius:6}}>
+              <div style={{height:"100%",borderRadius:6,background:"linear-gradient(90deg,#0e8074,#2fbf9b)",width:pctAll+"%",transition:"width .3s"}}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
+            <button onClick={()=>setShowReport(true)} style={{flex:1,...S.btnGhost}}>📋 Phiếu kiểm</button>
+            <button onClick={exportCSV} style={{flex:1,...S.btnGhost}}>📊 Excel</button>
+            <button onClick={exportBackup} style={{flex:1,...S.btnGhost}}>💾 Sao lưu</button>
+            <button onClick={()=>importRef.current&&importRef.current.click()} style={{flex:1,...S.btnGhost}}>♻️ Khôi phục</button>
+            <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} style={{display:"none"}}/>
+          </div>
+        </div>
+
         {suppliersArr.map(sup=>{
           const checked=supChecked(sup);
           const total=sup.products?sup.products.length:0;
           const pct=total?Math.round(checked/total*100):0;
           const done=checked===total&&total>0;
           return (
-            <div key={sup.id} onClick={()=>{setActiveSupId(sup.id);setScreen("check");}}
-              style={{...S.card,borderColor:done?sup.color+"80":"#2a3f52",cursor:"pointer",transition:"all .2s"}}>
+            <div key={sup.id} onClick={()=>{setActiveSupId(sup.id);setSearch("");setOnlyUnchecked(false);setScreen("check");}}
+              style={{...S.card,borderColor:done?sup.color:"#d3e6df",cursor:"pointer"}}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:50,height:50,borderRadius:14,background:sup.color+"25",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}}>{sup.icon}</div>
+                <div style={{width:50,height:50,borderRadius:14,background:sup.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}}>{sup.icon}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:15}}>{sup.name}</div>
-                  <div style={{fontSize:12,color:"#7fa8be",marginTop:2}}>{total} mặt hàng • {checked} đã kiểm</div>
-                  <div style={{height:4,background:"#0d1f2d",borderRadius:4,marginTop:6}}>
+                  <div style={{fontWeight:700,fontSize:15}}>{sup.name} {done?"✅":""}</div>
+                  <div style={{fontSize:12,color:"#55877b",marginTop:2}}>{total} mặt hàng • {checked} đã kiểm</div>
+                  <div style={{height:5,background:"#e2efea",borderRadius:4,marginTop:7}}>
                     <div style={{height:"100%",borderRadius:4,background:sup.color,width:pct+"%",transition:"width .3s"}}/>
                   </div>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  <button onClick={e=>{e.stopPropagation();genZaloSup(sup);}} style={{...S.btnGhost,padding:"6px 10px",borderColor:sup.color+"50",color:sup.color}}>📤</button>
-                  <button onClick={e=>{e.stopPropagation();setActiveSupId(sup.id);setShowAddProd(false);setEditProdId(null);setScreen("manage");}} style={{...S.btnGhost,padding:"6px 10px"}}>⚙️</button>
+                  <button onClick={e=>{e.stopPropagation();genZaloSup(sup);}} style={{...S.btnGhost,padding:"7px 11px",minHeight:36,color:sup.color,borderColor:sup.color+"66"}}>📤</button>
+                  <button onClick={e=>{e.stopPropagation();setActiveSupId(sup.id);setShowAddProd(false);setEditProdId(null);setScreen("manage");}} style={{...S.btnGhost,padding:"7px 11px",minHeight:36}}>⚙️</button>
                 </div>
               </div>
             </div>
@@ -291,19 +515,19 @@ function App() {
         })}
 
         {!showSupForm
-          ? <button onClick={()=>{setShowSupForm(true);setEditSupId(null);setSupForm({name:"",icon:"🛒",color:"#00b4d8"});}}
-              style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed #00b4d860",background:"#00b4d808",color:"#00e5ff",fontWeight:700,cursor:"pointer",fontSize:14,marginBottom:10}}>
+          ? <button onClick={()=>{setShowSupForm(true);setEditSupId(null);setSupForm({name:"",icon:"🛒",color:"#0e8074"});}}
+              style={{width:"100%",padding:"14px",borderRadius:12,border:"1.5px dashed #0e807480",background:"#0e80740d",color:"#0b6e5f",fontWeight:700,cursor:"pointer",fontSize:14,marginBottom:10,minHeight:48}}>
               + Thêm bạn hàng mới
             </button>
           : <div style={{...S.card,marginBottom:10}}>
-              <div style={{fontWeight:700,color:"#00e5ff",marginBottom:8}}>{editSupId?"Sửa bạn hàng":"Thêm bạn hàng mới"}</div>
+              <div style={{fontWeight:700,color:"#0b6e5f",marginBottom:8}}>{editSupId?"Sửa bạn hàng":"Thêm bạn hàng mới"}</div>
               <label style={S.label}>Tên bạn hàng</label>
               <input value={supForm.name} onChange={e=>setSupForm(v=>({...v,name:e.target.value}))} placeholder="VD: Bạn hàng Cá" style={S.input}/>
               <label style={S.label}>Icon</label>
               <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:6,marginBottom:4}}>
                 {SUPPLIER_ICONS.map(ic=>(
                   <button key={ic} onClick={()=>setSupForm(v=>({...v,icon:ic}))}
-                    style={{width:38,height:38,borderRadius:10,border:supForm.icon===ic?"2px solid #00e5ff":"2px solid #2a3f52",background:supForm.icon===ic?"#00b4d820":"#0d1f2d",fontSize:20,cursor:"pointer"}}>
+                    style={{width:40,height:40,borderRadius:10,border:supForm.icon===ic?"2px solid #0e8074":"2px solid #d3e6df",background:supForm.icon===ic?"#0e80741f":"#f4faf8",fontSize:20,cursor:"pointer"}}>
                     {ic}
                   </button>
                 ))}
@@ -312,97 +536,121 @@ function App() {
               <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:6,marginBottom:14}}>
                 {COLORS.map(c=>(
                   <button key={c} onClick={()=>setSupForm(v=>({...v,color:c}))}
-                    style={{width:28,height:28,borderRadius:"50%",background:c,border:supForm.color===c?"3px solid #fff":"3px solid transparent",cursor:"pointer"}}/>
+                    style={{width:30,height:30,borderRadius:"50%",background:c,border:supForm.color===c?"3px solid #0b6e5f":"3px solid transparent",cursor:"pointer"}}/>
                 ))}
               </div>
               <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>{setShowSupForm(false);setEditSupId(null);}} style={{flex:1,padding:"11px",borderRadius:8,border:"1.5px solid #2a3f52",background:"transparent",color:"#7fa8be",cursor:"pointer"}}>Hủy</button>
+                <button onClick={()=>{setShowSupForm(false);setEditSupId(null);}} style={{flex:1,padding:"12px",borderRadius:8,border:"1.5px solid #d3e6df",background:"transparent",color:"#55877b",cursor:"pointer"}}>Hủy</button>
                 <button onClick={saveSup} style={{flex:2,...S.btnPrimary}}>✅ Lưu</button>
               </div>
             </div>
         }
 
-        <button onClick={resetToday} style={{width:"100%",padding:"11px",borderRadius:10,border:"1.5px solid #ff444430",background:"#ff44440a",color:"#ff7070",cursor:"pointer",fontWeight:600}}>
-          🗑️ Xóa toàn bộ số lượng hôm nay
+        <button onClick={resetDay} style={{width:"100%",padding:"12px",borderRadius:10,border:"1.5px solid #f3c2c2",background:"#fff5f5",color:"#d64545",cursor:"pointer",fontWeight:600,minHeight:46}}>
+          🗑️ Xóa toàn bộ số lượng ngày này
         </button>
+        <div style={{textAlign:"center",fontSize:12,color:"#8fb3a9",marginTop:14}}>Kiểm Kho v2 • Dữ liệu đồng bộ realtime giữa các máy qua Firebase</div>
       </div>
       {showZalo&&<ZaloModal text={zaloText} onChange={setZaloText} copied={copied} onCopy={handleCopy} onClose={()=>setShowZalo(false)}/>}
+      {reportModal}
+      {toastEl}
     </div>
   );
 
   // CHECK
-  if(screen==="check"&&activeSup) return (
+  if(screen==="check"&&activeSup) {
+    const allProds = activeSup.products||[];
+    const q = search.trim().toLowerCase();
+    let prods = allProds.filter(p=>!q || p.name.toLowerCase().includes(q));
+    if(onlyUnchecked) prods = prods.filter(p=>inventory[p.id]===undefined||inventory[p.id]==="");
+    const remain = allProds.filter(p=>inventory[p.id]===undefined||inventory[p.id]==="").length;
+    return (
     <div style={S.page}>
-      <div style={{...S.header,background:`linear-gradient(90deg,${activeSup.color},${activeSup.color}bb)`}}>
+      <div style={{...S.header,background:"linear-gradient(90deg,"+activeSup.color+","+activeSup.color+"cc)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setScreen("home")} style={S.backBtn}>← Về</button>
           <span style={{fontSize:24}}>{activeSup.icon}</span>
           <div>
             <div style={{fontWeight:800,fontSize:16}}>{activeSup.name}</div>
-            <div style={{fontSize:11,opacity:.85}}>{supChecked(activeSup)}/{activeSup.products?activeSup.products.length:0} đã kiểm</div>
+            <div style={{fontSize:11,opacity:.9}}>{fmtDate(selDate)} • {supChecked(activeSup)}/{allProds.length} đã kiểm</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span className={`sync-dot ${syncStatus}`}></span>
-          <button onClick={()=>genZaloSup(activeSup)} style={{...S.btnPrimary,padding:"8px 14px",fontSize:13}}>📤 Zalo</button>
+          <span className={"sync-dot "+syncStatus}></span>
+          <button onClick={()=>genZaloSup(activeSup)} style={{...S.btnPrimary,padding:"9px 14px",fontSize:13,background:"#ffffff",color:"#14332c"}}>📤 Zalo</button>
         </div>
       </div>
       <div style={{padding:14,maxWidth:640,margin:"0 auto"}}>
-        {(!activeSup.products||activeSup.products.length===0)&&(
-          <div style={{textAlign:"center",padding:"40px 20px",color:"#7fa8be"}}>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Tìm mặt hàng..."
+            style={{...S.input,flex:1}}/>
+          <button onClick={()=>setOnlyUnchecked(v=>!v)}
+            style={{...S.chip,background:onlyUnchecked?"#0e8074":"#fff",color:onlyUnchecked?"#fff":"#0b6e5f",borderColor:onlyUnchecked?"#0e8074":"#bcdcd2",whiteSpace:"nowrap"}}>
+            Chưa kiểm ({remain})
+          </button>
+        </div>
+        {allProds.length===0&&(
+          <div style={{textAlign:"center",padding:"40px 20px",color:"#55877b"}}>
             <div style={{fontSize:40,marginBottom:12}}>📭</div>
             <div>Chưa có hàng. Vào ⚙️ để thêm!</div>
             <button onClick={()=>setScreen("manage")} style={{...S.btnPrimary,marginTop:14}}>⚙️ Quản lý hàng</button>
           </div>
         )}
-        {(activeSup.products||[]).map(p=>{
+        {allProds.length>0&&prods.length===0&&(
+          <div style={{textAlign:"center",padding:"30px 20px",color:"#55877b"}}>{onlyUnchecked&&!q?"🎉 Đã kiểm hết bạn hàng này!":"Không tìm thấy mặt hàng nào khớp."}</div>
+        )}
+        {prods.map(p=>{
           const qty=inventory[p.id];
           const hasVal=qty!==undefined&&qty!=="";
+          const st=stepFor(p.unit);
           return (
             <div key={p.id} style={{
-              background:hasVal?`linear-gradient(90deg,${activeSup.color}18,#1a2d3d)`:"#1a2d3d",
-              border:`1.5px solid ${hasVal?activeSup.color+"60":"#2a3f52"}`,
+              background:hasVal?("linear-gradient(90deg,"+activeSup.color+"14,#ffffff)"):"#ffffff",
+              border:"1.5px solid "+(hasVal?activeSup.color+"80":"#d3e6df"),
               borderRadius:12,padding:"12px 14px",marginBottom:10,
-              display:"flex",alignItems:"center",gap:10,transition:"all .2s",
+              display:"flex",alignItems:"center",gap:10,boxShadow:"0 1px 4px #0e807414",
             }}>
-              <div style={{width:30,height:30,borderRadius:"50%",background:hasVal?activeSup.color:"#2a3f52",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0,transition:"background .2s"}}>
+              <div style={{width:32,height:32,borderRadius:"50%",background:hasVal?activeSup.color:"#d3e6df",color:hasVal?"#fff":"#7ba79c",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0}}>
                 {hasVal?"✓":"·"}
               </div>
-              <div style={{flex:1,fontWeight:600,fontSize:15}}>{p.name}</div>
+              <div style={{flex:1,fontWeight:600,fontSize:15,minWidth:0}}>{p.name}</div>
               <div style={{display:"flex",alignItems:"center",gap:5}}>
-                <button onClick={()=>updateQty(p.id,Math.max(0,(Number(qty)||0)-1))} style={{width:32,height:32,borderRadius:8,border:"1.5px solid #00b4d830",background:"#0d1f2d",color:"#00e5ff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                <input type="number" min="0" value={qty===undefined?"":qty} onChange={e=>updateQty(p.id,e.target.value)} placeholder="0"
-                  style={{width:50,textAlign:"center",background:"#0d1f2d",border:"1.5px solid #00b4d840",borderRadius:8,color:"#00e5ff",fontSize:15,fontWeight:700,padding:"6px 2px",outline:"none"}}/>
-                <button onClick={()=>updateQty(p.id,(Number(qty)||0)+1)} style={{width:32,height:32,borderRadius:8,border:"1.5px solid #00b4d830",background:"#0d1f2d",color:"#00e5ff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                <span style={{fontSize:12,color:"#7fa8be",minWidth:28}}>{p.unit}</span>
+                <button onClick={()=>updateQty(p.id,Math.max(0,Math.round(((Number(qty)||0)-st)*100)/100))} style={{width:38,height:38,borderRadius:9,border:"1.5px solid #bcdcd2",background:"#f4faf8",color:"#0b6e5f",fontSize:19,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                <input type="number" min="0" step="any" value={qty===undefined?"":qty} onChange={e=>updateQty(p.id,e.target.value)} placeholder="0"
+                  style={{width:56,textAlign:"center",background:"#f4faf8",border:"1.5px solid #0e807466",borderRadius:8,color:"#0b6e5f",fontSize:16,fontWeight:700,padding:"8px 2px",outline:"none"}}/>
+                <button onClick={()=>updateQty(p.id,Math.round(((Number(qty)||0)+st)*100)/100)} style={{width:38,height:38,borderRadius:9,border:"1.5px solid #bcdcd2",background:"#f4faf8",color:"#0b6e5f",fontSize:19,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                <span style={{fontSize:12,color:"#55877b",minWidth:30}}>{p.unit}{st!==1?" (bước "+st+")":""}</span>
+                {hasVal&&<button onClick={()=>saveQty(p.id,"")} title="Xóa số" style={{width:30,height:38,border:"none",background:"transparent",color:"#c3a0a0",fontSize:15,cursor:"pointer"}}>✕</button>}
               </div>
             </div>
           );
         })}
-        {activeSup.products&&activeSup.products.length>0&&(
-          <button onClick={()=>genZaloSup(activeSup)} style={{width:"100%",marginTop:8,...S.btnPrimary,padding:"13px",fontSize:15}}>
+        {allProds.length>0&&(
+          <button onClick={()=>genZaloSup(activeSup)} style={{width:"100%",marginTop:8,...S.btnPrimary,padding:"14px",fontSize:15}}>
             📤 Tạo tin Zalo cho {activeSup.name}
           </button>
         )}
       </div>
       {showZalo&&<ZaloModal text={zaloText} onChange={setZaloText} copied={copied} onCopy={handleCopy} onClose={()=>setShowZalo(false)}/>}
+      {toastEl}
     </div>
-  );
+    );
+  }
 
   // MANAGE
   if(screen==="manage"&&activeSup) return (
     <div style={S.page}>
-      <div style={{...S.header,background:`linear-gradient(90deg,${activeSup.color},${activeSup.color}aa)`}}>
+      <div style={{...S.header,background:"linear-gradient(90deg,"+activeSup.color+","+activeSup.color+"cc)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setScreen("home")} style={S.backBtn}>← Về</button>
           <span style={{fontSize:22}}>{activeSup.icon}</span>
           <div style={{fontWeight:800,fontSize:16}}>Quản lý: {activeSup.name}</div>
         </div>
         <button onClick={()=>{setEditSupId(activeSup.id);setSupForm({name:activeSup.name,icon:activeSup.icon,color:activeSup.color});setShowSupForm(true);setScreen("home");}}
-          style={{...S.btnGhost,padding:"7px 12px",borderColor:"#ffffff50",color:"#fff"}}>✏️ Sửa</button>
+          style={{...S.btnGhost,padding:"8px 12px",borderColor:"#ffffff66",color:"#fff",background:"#ffffff2e"}}>✏️ Sửa</button>
       </div>
       <div style={{padding:14,maxWidth:640,margin:"0 auto"}}>
-        <button onClick={()=>setShowAddProd(v=>!v)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed #00b4d860",background:"#00b4d808",color:"#00e5ff",fontWeight:700,cursor:"pointer",fontSize:14,marginBottom:12}}>
+        <button onClick={()=>setShowAddProd(v=>!v)} style={{width:"100%",padding:"14px",borderRadius:12,border:"1.5px dashed #0e807480",background:"#0e80740d",color:"#0b6e5f",fontWeight:700,cursor:"pointer",fontSize:14,marginBottom:12,minHeight:48}}>
           + Thêm mặt hàng
         </button>
         {showAddProd&&(
@@ -412,39 +660,40 @@ function App() {
             <label style={S.label}>Đơn vị</label>
             <select value={newProd.unit} onChange={e=>setNewProd(v=>({...v,unit:e.target.value}))} style={{...S.select,marginBottom:12}}>{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setShowAddProd(false)} style={{flex:1,padding:"10px",borderRadius:8,border:"1.5px solid #2a3f52",background:"transparent",color:"#7fa8be",cursor:"pointer"}}>Hủy</button>
+              <button onClick={()=>setShowAddProd(false)} style={{flex:1,padding:"11px",borderRadius:8,border:"1.5px solid #d3e6df",background:"transparent",color:"#55877b",cursor:"pointer"}}>Hủy</button>
               <button onClick={addProduct} style={{flex:2,...S.btnPrimary}}>✅ Thêm</button>
             </div>
           </div>
         )}
         {(!activeSup.products||activeSup.products.length===0)&&!showAddProd&&(
-          <div style={{textAlign:"center",padding:"30px",color:"#7fa8be"}}>Chưa có mặt hàng nào. Bấm thêm nhé!</div>
+          <div style={{textAlign:"center",padding:"30px",color:"#55877b"}}>Chưa có mặt hàng nào. Bấm thêm nhé!</div>
         )}
         {(activeSup.products||[]).map(p=>(
           <div key={p.id} style={{...S.card,display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}}>
-            {editProdId===p.id?(
-              <>
+            {String(editProdId)===String(p.id)?(
+              <React.Fragment>
                 <input value={editProdVal.name} onChange={e=>setEditProdVal(v=>({...v,name:e.target.value}))} style={{...S.input,flex:1}}/>
-                <select value={editProdVal.unit} onChange={e=>setEditProdVal(v=>({...v,unit:e.target.value}))} style={{padding:"9px 6px",background:"#0d1f2d",border:"1.5px solid #00b4d840",borderRadius:8,color:"#e8f4f8",fontSize:13,outline:"none"}}>
+                <select value={editProdVal.unit} onChange={e=>setEditProdVal(v=>({...v,unit:e.target.value}))} style={{padding:"10px 6px",background:"#fff",border:"1.5px solid #bcdcd2",borderRadius:8,color:"#14332c",fontSize:13,outline:"none"}}>
                   {UNITS.map(u=><option key={u} value={u}>{u}</option>)}
                 </select>
-                <button onClick={saveEditProd} style={{...S.btnPrimary,padding:"8px 12px"}}>💾</button>
-                <button onClick={()=>setEditProdId(null)} style={{padding:"8px 10px",background:"#2a3f52",border:"none",borderRadius:8,color:"#aaa",cursor:"pointer"}}>✕</button>
-              </>
+                <button onClick={saveEditProd} style={{...S.btnPrimary,padding:"9px 12px",minHeight:40}}>💾</button>
+                <button onClick={()=>setEditProdId(null)} style={{padding:"9px 10px",background:"#e2efea",border:"none",borderRadius:8,color:"#55877b",cursor:"pointer",minHeight:40}}>✕</button>
+              </React.Fragment>
             ):(
-              <>
+              <React.Fragment>
                 <div style={{flex:1,fontWeight:600,fontSize:15}}>{p.name}</div>
-                <div style={{fontSize:12,background:"#0d1f2d",padding:"3px 10px",borderRadius:20,color:"#7fa8be"}}>{p.unit}</div>
+                <div style={{fontSize:12,background:"#eef6f3",padding:"4px 10px",borderRadius:20,color:"#55877b"}}>{p.unit}</div>
                 <button onClick={()=>{setEditProdId(p.id);setEditProdVal({name:p.name,unit:p.unit});}} style={S.btnGhost}>✏️</button>
-                <button onClick={()=>delProduct(p.id)} style={S.btnDanger}>🗑️</button>
-              </>
+                <button onClick={()=>delProduct(p)} style={S.btnDanger}>🗑️</button>
+              </React.Fragment>
             )}
           </div>
         ))}
-        <button onClick={()=>delSup(activeSup.id)} style={{width:"100%",marginTop:16,padding:"12px",borderRadius:10,border:"1.5px solid #ff444440",background:"#ff44440a",color:"#ff7070",cursor:"pointer",fontWeight:600}}>
+        <button onClick={()=>delSup(activeSup.id)} style={{width:"100%",marginTop:16,padding:"13px",borderRadius:10,border:"1.5px solid #f3c2c2",background:"#fff5f5",color:"#d64545",cursor:"pointer",fontWeight:600,minHeight:46}}>
           🗑️ Xóa bạn hàng "{activeSup.name}"
         </button>
       </div>
+      {toastEl}
     </div>
   );
 
